@@ -794,9 +794,13 @@ async function exportPDF() {
       y += 7;
 
       fields.forEach(({ key, label }) => {
+        // Metadata fields (created, type, source etc.) live on record root,
+        // not inside record.fields — check both
         const raw = key === 'groups'
           ? (record.groups || []).join(', ') || '—'
-          : getVal(f, key);
+          : (record[key] !== undefined && record[key] !== null && record[key] !== '')
+            ? getVal(record, key)
+            : getVal(f, key);
 
         doc.setFont('helvetica', 'normal');
         doc.setFontSize(8);
@@ -888,8 +892,14 @@ async function exportPDF() {
     }
   });
 
-  const dateStr  = new Date().toISOString().split('T')[0];
-  const fileName = `PointOne_Members_${dateStr}.pdf`;
+  const dateStr    = new Date().toISOString().split('T')[0];
+  const companyRaw = parsedRecords.length === 1
+    ? ((parsedRecords[0].fields || parsedRecords[0])['Company'] || '')
+    : '';
+  const companySafe = companyRaw.replace(/[^a-zA-Z0-9_\- ]/g, '').trim().replace(/\s+/g, '_');
+  const fileName = companySafe
+    ? `PointOne_${companySafe}_${dateStr}.pdf`
+    : `PointOne_Members_${dateStr}.pdf`;
   const pdfBlob  = doc.output('blob');
 
   if (accessToken) {

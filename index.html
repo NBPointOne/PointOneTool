@@ -470,7 +470,27 @@ let CLIENT_ID = localStorage.getItem('po_client_id') || '';
 
 // Track source folder so we can save back to the same Shared Drive location
 let sourceFolderId = null;
-let sourceDriveId = null;
+let sourceDriveId  = null;
+let sourceFileId   = null;
+
+// ── Exported file tracking ─────────────────────────────────────
+function loadExportedIds() {
+  try { return new Set(JSON.parse(localStorage.getItem('po_exported_ids') || '[]')); }
+  catch { return new Set(); }
+}
+function markAsExported(fileId) {
+  if (!fileId) return;
+  const ids = loadExportedIds();
+  ids.add(fileId);
+  localStorage.setItem('po_exported_ids', JSON.stringify([...ids]));
+}
+function clearExportHistory() {
+  localStorage.removeItem('po_exported_ids');
+  showStatus('Export history cleared.', 'info');
+  // Refresh the file list if it is visible
+  const list = document.getElementById('driveFileList');
+  if (list.style.display !== 'none') listDriveFiles();
+}
 
 // ── Credentials ────────────────────────────────────────────────
 if (CLIENT_ID) {
@@ -604,17 +624,45 @@ async function listDriveFiles() {
 
 // FIX: pass driveId and first parent folder to loadDriveFile
 function renderDriveFiles(files) {
+  // Sort newest first client-side — Drive API orderBy can be unreliable with Shared Drives
+  files.sort((a, b) => new Date(b.modifiedTime) - new Date(a.modifiedTime));
+
+  const exported = loadExportedIds();
+  const newFiles  = files.filter(f => !exported.has(f.id));
+  const doneFiles = files.filter(f =>  exported.has(f.id));
+
   const list = document.getElementById('driveFileList');
   list.innerHTML = '';
   list.style.display = 'block';
-  files.forEach(file => {
+
+  const renderFile = (file, isDone) => {
     const date = new Date(file.modifiedTime).toLocaleDateString('en-GB', {day:'2-digit',month:'short',year:'numeric'});
     const div = document.createElement('div');
-    div.className = 'drive-file-item';
-    div.innerHTML = `<span class="drive-file-icon">📄</span><span class="drive-file-name">${file.name}</span><span class="drive-file-date">${date}</span>`;
+    div.className = 'drive-file-item' + (isDone ? ' exported' : '');
+    div.innerHTML = `<span class="drive-file-icon">${isDone ? '✓' : '📄'}</span>`
+      + `<span class="drive-file-name">${file.name}</span>`
+      + `<span class="drive-file-date">${date}</span>`
+      + (isDone ? '<span class="drive-file-tag">Exported</span>' : '');
     div.onclick = () => loadDriveFile(file.id, file.name, div, file.driveId || null, (file.parents || [])[0] || null);
     list.appendChild(div);
-  });
+  };
+
+  newFiles.forEach(f  => renderFile(f, false));
+
+  if (doneFiles.length > 0) {
+    const divider = document.createElement('div');
+    divider.className = 'drive-file-divider';
+    divider.textContent = `— ${doneFiles.length} already exported —`;
+    list.appendChild(divider);
+    doneFiles.forEach(f => renderFile(f, true));
+  }
+
+  // Clear history link
+  const clearBtn = document.createElement('div');
+  clearBtn.className = 'drive-clear-history';
+  clearBtn.textContent = 'Clear export history';
+  clearBtn.onclick = clearExportHistory;
+  list.appendChild(clearBtn);
 }
 
 // FIX: store source drive/folder; add supportsAllDrives to the media fetch
@@ -623,6 +671,7 @@ async function loadDriveFile(fileId, fileName, el, driveId, folderId) {
   el.classList.add('selected');
   sourceDriveId  = driveId  || null;
   sourceFolderId = folderId || null;
+  sourceFileId   = fileId;
   showStatus('Loading ' + fileName + ' from Drive...', 'info');
   try {
     const resp = await fetch(
@@ -904,8 +953,10 @@ async function exportPDF() {
 
   if (accessToken) {
     await saveToDrive(pdfBlob, fileName, 'application/pdf');
+    markAsExported(sourceFileId);
   } else {
     doc.save(fileName);
+    markAsExported(sourceFileId);
     showStatus('PDF saved locally.', 'success');
   }
 }
@@ -932,15 +983,23 @@ async function exportXLSX() {
   });
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Members');
-  const dateStr  = new Date().toISOString().split('T')[0];
-  const fileName = `PointOne_Members_${dateStr}.xlsx`;
+  const dateStr    = new Date().toISOString().split('T')[0];
+  const companyRaw = parsedRecords.length === 1
+    ? ((parsedRecords[0].fields || parsedRecords[0])['Company'] || '')
+    : '';
+  const companySafe = companyRaw.replace(/[^a-zA-Z0-9_\- ]/g, '').trim().replace(/\s+/g, '_');
+  const fileName = companySafe
+    ? `PointOne_${companySafe}_${dateStr}.xlsx`
+    : `PointOne_Members_${dateStr}.xlsx`;
 
   if (accessToken) {
     const xlsxData = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
     const blob = new Blob([xlsxData], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     await saveToDrive(blob, fileName, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    markAsExported(sourceFileId);
   } else {
     XLSX.writeFile(wb, fileName);
+    markAsExported(sourceFileId);
     showStatus('Spreadsheet saved locally.', 'success');
   }
 }

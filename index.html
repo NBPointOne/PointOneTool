@@ -468,6 +468,10 @@ let tokenClient = null;
 let accessToken = null;
 let CLIENT_ID = localStorage.getItem('po_client_id') || '';
 
+// Track source folder so we can save back to the same Shared Drive location
+let sourceFolderId = null;
+let sourceDriveId = null;
+
 // ── Credentials ────────────────────────────────────────────────
 if (CLIENT_ID) {
   document.getElementById('clientIdInput').value = CLIENT_ID;
@@ -506,7 +510,6 @@ function handleAuth() {
     return;
   }
   if (accessToken) {
-    // Sign out
     google.accounts.oauth2.revoke(accessToken, () => {
       accessToken = null;
       setAuthState(false);
@@ -519,8 +522,8 @@ function handleAuth() {
 
 function setAuthState(connected) {
   const statusEl = document.getElementById('authStatus');
-  const btnAuth = document.getElementById('btnAuth');
-  const btnPick = document.getElementById('btnDrivePick');
+  const btnAuth  = document.getElementById('btnAuth');
+  const btnPick  = document.getElementById('btnDrivePick');
   if (connected) {
     statusEl.className = 'auth-status connected';
     statusEl.innerHTML = '<span class="dot"></span><span>Connected to Google Drive</span>';
@@ -573,12 +576,18 @@ function handleFiles(files) {
 }
 
 // ── Google Drive file listing ──────────────────────────────────
+// FIX: added supportsAllDrives + includeItemsFromAllDrives so Shared Drive files appear
+// FIX: added driveId and parents to fields so we can save back to the right place
 async function listDriveFiles() {
   if (!accessToken) { showStatus('Please connect Google Drive first.', 'error'); return; }
   showStatus('Searching Drive for JSON files...', 'info');
   try {
     const resp = await fetch(
-      "https://www.googleapis.com/drive/v3/files?q=mimeType%3D'application%2Fjson'+and+trashed%3Dfalse&fields=files(id%2Cname%2CmodifiedTime%2Csize)&orderBy=modifiedTime+desc&pageSize=50",
+      "https://www.googleapis.com/drive/v3/files" +
+      "?q=mimeType%3D'application%2Fjson'+and+trashed%3Dfalse" +
+      "&fields=files(id%2Cname%2CmodifiedTime%2Csize%2CdriveId%2Cparents)" +
+      "&orderBy=modifiedTime+desc&pageSize=50" +
+      "&supportsAllDrives=true&includeItemsFromAllDrives=true",
       { headers: { Authorization: 'Bearer ' + accessToken } }
     );
     const data = await resp.json();
@@ -593,6 +602,7 @@ async function listDriveFiles() {
   }
 }
 
+// FIX: pass driveId and first parent folder to loadDriveFile
 function renderDriveFiles(files) {
   const list = document.getElementById('driveFileList');
   list.innerHTML = '';
@@ -602,18 +612,21 @@ function renderDriveFiles(files) {
     const div = document.createElement('div');
     div.className = 'drive-file-item';
     div.innerHTML = `<span class="drive-file-icon">📄</span><span class="drive-file-name">${file.name}</span><span class="drive-file-date">${date}</span>`;
-    div.onclick = () => loadDriveFile(file.id, file.name, div);
+    div.onclick = () => loadDriveFile(file.id, file.name, div, file.driveId || null, (file.parents || [])[0] || null);
     list.appendChild(div);
   });
 }
 
-async function loadDriveFile(fileId, fileName, el) {
+// FIX: store source drive/folder; add supportsAllDrives to the media fetch
+async function loadDriveFile(fileId, fileName, el, driveId, folderId) {
   document.querySelectorAll('.drive-file-item').forEach(i => i.classList.remove('selected'));
   el.classList.add('selected');
+  sourceDriveId  = driveId  || null;
+  sourceFolderId = folderId || null;
   showStatus('Loading ' + fileName + ' from Drive...', 'info');
   try {
     const resp = await fetch(
-      `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+      `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`,
       { headers: { Authorization: 'Bearer ' + accessToken } }
     );
     const text = await resp.text();
@@ -662,63 +675,66 @@ function getVal(obj, key) {
 
 // ── Field definitions ──────────────────────────────────────────
 const PDF_META_FIELDS = [
-  { key: 'created', label: 'Record Created' },
-  { key: 'type', label: 'Status' },
-  { key: 'source', label: 'Source' },
-  { key: 'groups', label: 'Group(s)' },
-  { key: 'signup_timestamp', label: 'Signup Timestamp' },
-  { key: 'confirmation_timestamp', label: 'Confirmation Timestamp' },
+  { key: 'created',                  label: 'Record Created' },
+  { key: 'type',                     label: 'Status' },
+  { key: 'source',                   label: 'Source' },
+  { key: 'groups',                   label: 'Group(s)' },
+  { key: 'signup_timestamp',         label: 'Signup Timestamp' },
+  { key: 'confirmation_timestamp',   label: 'Confirmation Timestamp' },
 ];
 const PDF_FORM_FIELDS = [
-  { key: 'Name', label: 'Full Name' },
-  { key: 'email', label: 'Email' },
-  { key: 'Phone', label: 'Phone' },
-  { key: 'Company', label: 'Company' },
-  { key: 'entity type', label: 'Entity Type' },
-  { key: 'company registration number', label: 'Company Reg. Number' },
-  { key: 'tax registration number', label: 'Tax Reg. Number' },
-  { key: 'estimated annual turnover', label: 'Est. Annual Turnover' },
-  { key: 'financial year end', label: 'Financial Year End' },
-  { key: 'sector', label: 'Sector' },
-  { key: 'Country', label: 'Country' },
-  { key: 'hq address', label: 'HQ Address' },
-  { key: 'website', label: 'Website' },
-  { key: 'bank account name', label: 'Bank Account Name' },
-  { key: 'authorized signatory name', label: 'Authorised Signatory Name' },
-  { key: 'authorized signatory title', label: 'Authorised Signatory Title' },
-  { key: 'signing city', label: 'Signing City' },
-  { key: 'signing date', label: 'Signing Date' },
-  { key: 'signup source', label: 'Signup Source' },
-  { key: 'authorized to submit', label: 'Authorised to Submit' },
-  { key: 'privacy notice consent', label: 'Privacy Notice Consent' },
-  { key: 'public materials consent', label: 'Public Materials Consent' },
-  { key: 'geapp due diligence', label: 'GEAPP Due Diligence' },
-  { key: 'confirm renewal', label: 'Confirm Renewal' },
-  { key: 'confirm intent', label: 'Confirm Intent' },
+  { key: 'Name',                          label: 'Full Name' },
+  { key: 'email',                         label: 'Email' },
+  { key: 'Phone',                         label: 'Phone' },
+  { key: 'Company',                       label: 'Company' },
+  { key: 'entity type',                   label: 'Entity Type' },
+  { key: 'company registration number',   label: 'Company Reg. Number' },
+  { key: 'tax registration number',       label: 'Tax Reg. Number' },
+  { key: 'estimated annual turnover',     label: 'Est. Annual Turnover' },
+  { key: 'financial year end',            label: 'Financial Year End' },
+  { key: 'sector',                        label: 'Sector' },
+  { key: 'Country',                       label: 'Country' },
+  { key: 'hq address',                    label: 'HQ Address' },
+  { key: 'website',                       label: 'Website' },
+  { key: 'bank account name',             label: 'Bank Account Name' },
+  { key: 'authorized signatory name',     label: 'Authorised Signatory Name' },
+  { key: 'authorized signatory title',    label: 'Authorised Signatory Title' },
+  { key: 'signing city',                  label: 'Signing City' },
+  { key: 'signing date',                  label: 'Signing Date' },
+  { key: 'signup source',                 label: 'Signup Source' },
+  { key: 'authorized to submit',          label: 'Authorised to Submit' },
+  { key: 'privacy notice consent',        label: 'Privacy Notice Consent' },
+  { key: 'public materials consent',      label: 'Public Materials Consent' },
+  { key: 'geapp due diligence',           label: 'GEAPP Due Diligence' },
+  { key: 'confirm renewal',               label: 'Confirm Renewal' },
+  { key: 'confirm intent',                label: 'Confirm Intent' },
 ];
 const XL_FIELDS = [
-  { key: 'Name', label: 'Full Name' },
-  { key: 'email', label: 'Email' },
-  { key: 'Phone', label: 'Phone' },
-  { key: 'Company', label: 'Company' },
-  { key: 'entity type', label: 'Entity Type' },
-  { key: 'company registration number', label: 'Company Reg. Number' },
-  { key: 'sector', label: 'Sector' },
-  { key: 'Country', label: 'Country' },
-  { key: 'hq address', label: 'HQ Address' },
-  { key: 'website', label: 'Website' },
-  { key: 'estimated annual turnover', label: 'Est. Annual Turnover' },
-  { key: 'financial year end', label: 'Financial Year End' },
-  { key: 'authorized signatory name', label: 'Auth. Signatory Name' },
-  { key: 'signing date', label: 'Signing Date' },
-  { key: 'authorized to submit', label: 'Authorised to Submit' },
-  { key: 'privacy notice consent', label: 'Privacy Notice Consent' },
-  { key: 'public materials consent', label: 'Public Materials Consent' },
-  { key: 'geapp due diligence', label: 'GEAPP Due Diligence' },
-  { key: 'confirm intent', label: 'Confirm Intent' },
+  { key: 'Name',                          label: 'Full Name' },
+  { key: 'email',                         label: 'Email' },
+  { key: 'Phone',                         label: 'Phone' },
+  { key: 'Company',                       label: 'Company' },
+  { key: 'entity type',                   label: 'Entity Type' },
+  { key: 'company registration number',   label: 'Company Reg. Number' },
+  { key: 'sector',                        label: 'Sector' },
+  { key: 'Country',                       label: 'Country' },
+  { key: 'hq address',                    label: 'HQ Address' },
+  { key: 'website',                       label: 'Website' },
+  { key: 'estimated annual turnover',     label: 'Est. Annual Turnover' },
+  { key: 'financial year end',            label: 'Financial Year End' },
+  { key: 'authorized signatory name',     label: 'Auth. Signatory Name' },
+  { key: 'signing date',                  label: 'Signing Date' },
+  { key: 'authorized to submit',          label: 'Authorised to Submit' },
+  { key: 'privacy notice consent',        label: 'Privacy Notice Consent' },
+  { key: 'public materials consent',      label: 'Public Materials Consent' },
+  { key: 'geapp due diligence',           label: 'GEAPP Due Diligence' },
+  { key: 'confirm intent',                label: 'Confirm Intent' },
 ];
 
 // ── PDF export ─────────────────────────────────────────────────
+// FIX: y now tracks the TOP of each row (= position of the separator above it).
+// Text baseline is placed at y + TOP_PAD inside each row, which ensures text
+// always sits clearly below the preceding separator line.
 document.getElementById('btnPdf').addEventListener('click', exportPDF);
 
 async function exportPDF() {
@@ -729,11 +745,18 @@ async function exportPDF() {
   const usableW = pageW - marginR - colValue;
   const DARK = [26,26,26], GREEN = [42,95,63], GREY = [120,120,120], RULE = [212,207,196], LIGHT = [245,242,235];
 
+  // jsPDF line height for 8pt Helvetica  ≈  8pt × 1.15 / 2.835 pt/mm  ≈  3.25 mm
+  // We use 3.4 mm (slightly generous) so multi-line wrapping never clips.
+  const LINE_H = 3.4;  // mm between baselines for 8pt text
+  const TOP_PAD = 4;   // mm from row-top (separator above) to first text baseline
+  const BOT_PAD = 3;   // mm from last text baseline to separator below
+
   parsedRecords.forEach((record, rIdx) => {
     if (rIdx > 0) doc.addPage();
     const f = record.fields || record;
     let y = marginT;
 
+    // Header bar
     doc.setFillColor(...GREEN);
     doc.rect(0, 0, pageW, 14, 'F');
     doc.setFont('helvetica', 'bold');
@@ -744,6 +767,7 @@ async function exportPDF() {
     doc.setFontSize(8);
     doc.text('Member Agreement Record', pageW - marginR, 9, { align: 'right' });
 
+    // Company name
     y = 24;
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(16);
@@ -755,82 +779,119 @@ async function exportPDF() {
     doc.line(marginL, y, pageW - marginR, y);
     y += 7;
 
+    // ── renderSection ─────────────────────────────────────────
+    // y enters and exits as the "current row-top / separator position".
     const renderSection = (title, fields) => {
-      if (y > pageH - 35) { doc.addPage(); y = marginT; }
+      if (y > pageH - 40) { doc.addPage(); y = marginT; }
+
+      // Section header band
       doc.setFillColor(...LIGHT);
       doc.rect(marginL - 2, y - 4, pageW - marginL - marginR + 4, 7, 'F');
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(7.5);
       doc.setTextColor(...GREEN);
       doc.text(title.toUpperCase(), marginL, y);
-      y += 6;
-      fields.forEach(( { key, label } ) => {
-        const raw = key === 'groups' ? (record.groups || []).join(', ') || '—' : getVal(f, key);
-        if (y > pageH - 20) { doc.addPage(); y = marginT; }
+      y += 7;
+
+      fields.forEach(({ key, label }) => {
+        const raw = key === 'groups'
+          ? (record.groups || []).join(', ') || '—'
+          : getVal(f, key);
+
         doc.setFont('helvetica', 'normal');
         doc.setFontSize(8);
-        doc.setTextColor(...GREY);
-        doc.text(label, colLabel, y);
-        doc.setTextColor(...DARK);
         const lines = doc.splitTextToSize(raw, usableW);
-        doc.text(lines, colValue, y);
-        const rowH = Math.max(5.5, lines.length * 4.5);
+
+        // Row height: top padding + all lines + bottom padding
+        const rowH = Math.max(9, TOP_PAD + (lines.length - 1) * LINE_H + BOT_PAD + 2.5);
+        // (+2.5 is approximate cap-height of the last line so BOT_PAD sits below the letters)
+
+        if (y + rowH > pageH - 18) { doc.addPage(); y = marginT; }
+
+        // Text baseline sits TOP_PAD below the row top
+        const textY = y + TOP_PAD;
+
+        doc.setTextColor(...GREY);
+        doc.text(label, colLabel, textY);
+        doc.setTextColor(...DARK);
+        doc.text(lines, colValue, textY);
+
+        // Separator at the bottom of the row
         doc.setDrawColor(...RULE);
         doc.setLineWidth(0.2);
-        doc.line(marginL, y + rowH - 1, pageW - marginR, y + rowH - 1);
-        y += rowH + 0.5;
+        doc.line(marginL, y + rowH, pageW - marginR, y + rowH);
+
+        y += rowH;
       });
-      y += 4;
+
+      y += 4; // gap after section
     };
 
+    // ── renderConsents ────────────────────────────────────────
     const renderConsents = (fields) => {
-      if (y > pageH - 50) { doc.addPage(); y = marginT; }
+      if (y > pageH - 55) { doc.addPage(); y = marginT; }
+
+      // Section header band (green with white text)
       doc.setFillColor(...GREEN);
       doc.rect(marginL - 2, y - 4, pageW - marginL - marginR + 4, 7, 'F');
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(7.5);
       doc.setTextColor(255,255,255);
       doc.text('CONSENTS & AGREEMENTS', marginL, y);
-      y += 6;
-      fields.forEach(( { key, label } ) => {
-        if (y > pageH - 20) { doc.addPage(); y = marginT; }
-        const val = getVal(f, key);
+      y += 7;
+
+      fields.forEach(({ key, label }) => {
+        if (y + 8.5 > pageH - 18) { doc.addPage(); y = marginT; }
+
+        const val   = getVal(f, key);
         const isYes = val.toLowerCase() === 'yes';
+
+        // Consent rows are always single-line
+        const ROW_H = 8.5;
+        const textY = y + TOP_PAD;
+
         doc.setFont('helvetica', 'normal');
         doc.setFontSize(8);
         doc.setTextColor(...GREY);
-        doc.text(label, colLabel, y);
+        doc.text(label, colLabel, textY);
+
         doc.setFont('helvetica', 'bold');
         doc.setTextColor(isYes ? 42 : 26, isYes ? 95 : 26, isYes ? 63 : 26);
-        doc.text(isYes ? '✓  ' + val : val, colValue, y);
+        doc.text(isYes ? '✓  ' + val : val, colValue, textY);
+
         doc.setDrawColor(...RULE);
         doc.setLineWidth(0.2);
-        doc.line(marginL, y + 4, pageW - marginR, y + 4);
-        y += 6;
+        doc.line(marginL, y + ROW_H, pageW - marginR, y + ROW_H);
+
+        y += ROW_H;
       });
+
       y += 4;
     };
 
-    renderSection('Record Metadata', PDF_META_FIELDS);
+    renderSection('Record Metadata',        PDF_META_FIELDS);
     renderSection('Contact & Organisation', PDF_FORM_FIELDS.slice(0, 13));
-    renderSection('Signatory', PDF_FORM_FIELDS.slice(13, 19));
+    renderSection('Signatory',              PDF_FORM_FIELDS.slice(13, 19));
     renderConsents(PDF_FORM_FIELDS.slice(19));
 
+    // Page footers
     const totalPages = doc.internal.getNumberOfPages();
     for (let p = 1; p <= totalPages; p++) {
       doc.setPage(p);
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(7);
       doc.setTextColor(...GREY);
-      doc.text(`Generated: ${new Date().toISOString().split('T')[0]}  ·  Record ${rIdx+1} of ${parsedRecords.length}  ·  Page ${p} of ${totalPages}`, pageW/2, pageH-8, { align: 'center' });
+      doc.text(
+        `Generated: ${new Date().toISOString().split('T')[0]}  ·  Record ${rIdx+1} of ${parsedRecords.length}  ·  Page ${p} of ${totalPages}`,
+        pageW / 2, pageH - 8, { align: 'center' }
+      );
     }
   });
 
-  const dateStr = new Date().toISOString().split('T')[0];
+  const dateStr  = new Date().toISOString().split('T')[0];
   const fileName = `PointOne_Members_${dateStr}.pdf`;
-  const pdfBlob = doc.output('blob');
+  const pdfBlob  = doc.output('blob');
 
-  // Save to Drive if connected, otherwise download locally
   if (accessToken) {
     await saveToDrive(pdfBlob, fileName, 'application/pdf');
   } else {
@@ -861,7 +922,7 @@ async function exportXLSX() {
   });
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Members');
-  const dateStr = new Date().toISOString().split('T')[0];
+  const dateStr  = new Date().toISOString().split('T')[0];
   const fileName = `PointOne_Members_${dateStr}.xlsx`;
 
   if (accessToken) {
@@ -875,20 +936,31 @@ async function exportXLSX() {
 }
 
 // ── Save to Google Drive ───────────────────────────────────────
+// FIX 1: supportsAllDrives=true added to the upload URL
+// FIX 2: if a file was loaded from Drive, save back to the same parent folder
 async function saveToDrive(blob, fileName, mimeType) {
   showStatus('Saving to Google Drive...', 'info');
   try {
     const metadata = { name: fileName, mimeType: mimeType };
+
+    // If we loaded from a Drive folder, save back there
+    if (sourceFolderId) {
+      metadata.parents = [sourceFolderId];
+    }
+
     const form = new FormData();
     form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
     form.append('file', blob);
+
     const resp = await fetch(
-      'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink',
+      'https://www.googleapis.com/upload/drive/v3/files' +
+      '?uploadType=multipart&fields=id,name,webViewLink&supportsAllDrives=true',
       { method: 'POST', headers: { Authorization: 'Bearer ' + accessToken }, body: form }
     );
     const result = await resp.json();
     if (result.id) {
-      showStatus(`✓ Saved to Google Drive: ${result.name}`, 'success');
+      const location = sourceFolderId ? 'shared folder' : 'My Drive';
+      showStatus(`✓ Saved to Google Drive (${location}): ${result.name}`, 'success');
     } else {
       throw new Error(JSON.stringify(result));
     }

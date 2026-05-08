@@ -364,6 +364,46 @@
     display: flex;
     justify-content: space-between;
   }
+  /* ── Exported file flag ───────────────────────────────────── */
+.drive-file-item.exported {
+  opacity: 0.5;
+}
+.drive-file-item.exported .drive-file-name {
+  color: #888;
+  text-decoration: line-through;
+}
+.drive-file-tag {
+  font-size: 10px;
+  font-weight: 600;
+  color: #2a5f3f;
+  background: #e8f5ee;
+  border: 1px solid #b8ddc8;
+  border-radius: 3px;
+  padding: 1px 6px;
+  white-space: nowrap;
+  letter-spacing: 0.3px;
+}
+.drive-file-divider {
+  padding: 8px 14px;
+  font-size: 11px;
+  color: #aaa;
+  text-align: center;
+  border-top: 1px solid #e8e5dd;
+  border-bottom: 1px solid #e8e5dd;
+  background: #faf9f6;
+  user-select: none;
+}
+.drive-clear-history {
+  padding: 8px 14px;
+  font-size: 11px;
+  color: #aaa;
+  text-align: center;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.drive-clear-history:hover {
+  color: #2a5f3f;
+}
 </style>
 </head>
 <body>
